@@ -812,16 +812,68 @@ function Main {
         $isUsed = Test-NotepadPlusPlusUsage
         
         if (-not $isUsed) {
-            Write-Log "Application unused for $UnusedDaysThreshold+ days. Performing silent uninstall." -Level Info
-            $uninstallResult = Uninstall-NotepadPlusPlus -UninstallString $versionInfo.UninstallString -InstallLocation $versionInfo.InstallLocation
+            Write-Log "Application unused for $UnusedDaysThreshold+ days. Verifying uninstall state before remediation." -Level Info
             
-            if ($uninstallResult) {
-                Write-Log "Silent uninstall completed successfully" -Level Success
+        # Application is in use - check if running and prompt with deferrals
+        if (Test-NotepadPlusPlusRunning) {
+            Write-Log "Notepad++ is currently running. Prompting user with $MaxDeferrals deferral(s) allowed." -Level Info
+            $userChoice = Show-UpdatePrompt -RemainingDeferrals $MaxDeferrals
+        }
+        else {
+            Write-Log "Notepad++ is not currently running. Proceeding with upgrade." -Level Info
+        }
+
+            $uninstallExePath = $null
+            if ($versionInfo.UninstallString) {
+                if ($versionInfo.UninstallString -match '^\"([^\"]+)\"') {
+                    $uninstallExePath = $matches[1]
+                }
+                else {
+                    $uninstallExePath = ($versionInfo.UninstallString -split '\s+')[0]
+                }
+            }
+            
+            $hasUninstallExe = $false
+            if ($uninstallExePath -and (Test-Path -Path $uninstallExePath)) {
+                $hasUninstallExe = $true
+            }
+            
+            if ($hasUninstallExe) {
+                Write-Log "Verified uninstall.exe at $uninstallExePath. Performing silent uninstall." -Level Info
+                $uninstallResult = Uninstall-NotepadPlusPlus -UninstallString $versionInfo.UninstallString -InstallLocation $versionInfo.InstallLocation
+                
+                if ($uninstallResult) {
+                    Write-Log "Silent uninstall completed successfully" -Level Success
+                }
+                else {
+                    Write-Log "Silent uninstall encountered errors" -Level Error
+                }
+                exit 0
+            }
+            
+            Write-Log "uninstall.exe not found from uninstall string. Gathering uninstall key/exe state." -Level Warning
+            
+            $hasRegistryUninstallEntry = $false
+            if ($versionInfo.RegistryPath) {
+                $hasRegistryUninstallEntry = $true
+            }
+            
+            if (-not $hasRegistryUninstallEntry -and -not $hasUninstallExe) {
+                Write-Log "No uninstall registry key and no uninstall.exe found. Performing install-over-top remediation." -Level Warning
             }
             else {
-                Write-Log "Silent uninstall encountered errors" -Level Error
+                Write-Log "Uninstall data is incomplete (Registry key: $hasRegistryUninstallEntry, uninstall.exe: $hasUninstallExe). Performing install-over-top remediation." -Level Warning
             }
-            exit 0
+            
+            $installResult = Install-NotepadPlusPlus -InstallerUrl $LatestInstallerUrl
+            if ($installResult) {
+                Write-Log "Install-over-top remediation completed successfully" -Level Success
+                exit 0
+            }
+            else {
+                Write-Log "Install-over-top remediation failed" -Level Error
+                exit 1
+            }
         }
         
         # Phase 2: Application is in use - check if running and prompt with deferrals
